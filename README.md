@@ -1,4 +1,4 @@
-# Data-visualization-dashboard
+# Data Visualization Dashboard
 Data visualization dashboard with flexdashboard
 
 ## Table of Contents
