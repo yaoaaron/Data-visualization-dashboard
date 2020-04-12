@@ -1,0 +1,662 @@
+---
+title: "Dashboard"
+author: "Aaron Yao"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: scroll
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(quantmod)
+library(tidyverse)
+library(rvest)
+library(lubridate)
+library(tidyquant)
+library(dygraphs)
+library(formattable)
+startDate = "2008-01-01"
+endDate = "2018-10-17"
+
+## web scraping: get the list of S&P500 stocks
+# Web-scrape SP500 stock list
+sp_500 <- read_html("https://en.wikipedia.org/wiki/List_of_S%26P_500_companies") %>%
+  html_node("table.wikitable") %>%
+  html_table() %>%
+  select(`Ticker symbol`, Security, `GICS Sector`, `GICS Sub Industry`) %>% 
+  as_tibble()
+# Format names
+names(sp_500) <- sp_500 %>% 
+  names() %>% 
+  str_to_lower() %>% 
+  make.names()
+
+sp_500$ticker.symbol <- gsub('[.]', '-', sp_500$ticker.symbol)
+
+############ creating functions to map
+get_stock_prices <- function(ticker, return_format = "tibble", ...) {
+  # Get stock prices
+  stock_prices_xts <- getSymbols(Symbols = ticker, auto.assign = FALSE, ...)
+  # Rename
+  names(stock_prices_xts) <- c("Open", "High", "Low", "Close", "Volume", "Adjusted")
+  # Return in xts format if tibble is not specified
+  if (return_format == "tibble") {
+    stock_prices <- stock_prices_xts %>%
+      as_tibble() %>%
+      rownames_to_column(var = "Date") %>%
+      mutate(Date = ymd(Date))
+  } else {
+    stock_prices <- stock_prices_xts
+  }
+  stock_prices
+}
+
+
+get_log_returns <- function(x, return_format = "tibble", period = 'daily', ...) {
+  # Convert tibble to xts
+  if (!is.xts(x)) {
+    x <- xts(x[,-1], order.by = x$Date)
+  }
+  # Get log returns
+  log_returns_xts <- periodReturn(x = x$Adjusted, type = 'log', period = period, ...)
+  # Rename
+  names(log_returns_xts) <- "Log.Returns"
+  # Return in xts format if tibble is not specified
+  if (return_format == "tibble") {
+    log_returns <- log_returns_xts %>%
+      as_tibble() %>%
+      rownames_to_column(var = "Date") %>%
+      mutate(Date = ymd(Date))
+  } else {
+    log_returns <- log_returns_xts
+  }
+  log_returns
+}
+
+
+sp_500_detail <- sp_500 %>% filter(!ticker.symbol %in% c('BHF', 'DXC', 'JEF', 'UA')) %>%
+  mutate(
+    stock.prices = map(ticker.symbol, 
+                       function(.x) get_stock_prices(.x, 
+                                                     return_format = "tibble",
+                                                     from = startDate,
+                                                     to = endDate)
+    ),
+    log.returns  = map(stock.prices, 
+                       function(.x) get_log_returns(.x, return_format = "tibble")),
+    mean.log.returns = map_dbl(log.returns, ~ mean(.$Log.Returns)),
+    sd.log.returns   = map_dbl(log.returns, ~ sd(.$Log.Returns)),
+    n.trade.days = map_dbl(stock.prices, ~ sum(complete.cases(.)))
+  ) 
+
+sp_500_short <- sp_500_detail %>% 
+  select(ticker.symbol, mean.log.returns:n.trade.days)
+```
+
+S&P 500 Stock Analysis
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- Took S&P 500 stocks and compared every one of them by looking at the mean and the standard deviation of the log returns: The mean characterizes the average growth or return while the standard deviation characterizes the volatility or risk.
+- From the zoom-in plot, we can see that a small number of stocks have a combination of high mean and low standard deviation log returns. So picked top 4 stocks for further analysis. Also these 4 stocks follow a diversification strategy, which minimize the risks.
+- Comparing the top 4 stocks, ABMD had the highest historical price while ROST had the lowest historical price. AVGO had a small decline since 2018.
+
+Column {data-width=450}
+-----------------------------------------------------------------------
+
+### S&P 500 Stock Risk vs Growth
+
+```{r}
+sp_500_short %>% 
+  select(ticker.symbol, mean.log.returns:n.trade.days) %>%
+  ggplot(aes(sd.log.returns, mean.log.returns, color = n.trade.days)) + 
+    geom_point(shape=16, aes(size = n.trade.days), alpha = .4) + 
+    theme_minimal() + 
+    scale_color_gradient(low = "#0091ff", high = "#f0650e") + 
+    scale_alpha(range=c(.25, .6)) + 
+  labs(x = "Risk (StDev Log Returns)", y = "Growth (Mean Log Returns)", title = "") 
+```
+
+### Straw Broom Charts of 4 Selected Stocks
+
+```{r}
+AVGO <- tq_get("AVGO", get = "stock.prices", from = startDate, to = endDate)
+AVGO_xts <- xts(AVGO[,-1], order.by = as.Date(AVGO$date))
+ABMD <- tq_get("ABMD", get = "stock.prices", from = startDate, to = endDate)
+ABMD_xts <- xts(ABMD[,-1], order.by = as.Date(ABMD$date))
+ROST <- tq_get("ROST", get = "stock.prices", from = startDate, to = endDate)
+ROST_xts <- xts(ROST[,-1], order.by = as.Date(ROST$date))
+ALGN <- tq_get("ALGN", get = "stock.prices", from = startDate, to = endDate)
+ALGN_xts <- xts(ALGN[,-1], order.by = as.Date(ALGN$date))
+tickers <- c('AVGO_xts', 'ABMD_xts', 'ROST_xts', 'ALGN_xts')
+closePrices <- do.call(merge, lapply(tickers, function(x) Cl(get(x))))
+names(closePrices) <- c('AVGO.Close', 'ABMD.Close', 'ROST.Close', 'ALGN.Close')
+dygraph(closePrices, group = "stock") %>%
+  dyRangeSelector()
+```
+
+
+Column {data-width=350}
+-----------------------------------------------------------------------
+
+### Zoom In: S&P 500 Stock Risk vs Growth
+
+```{r}
+sp_500_short %>% 
+  select(ticker.symbol, mean.log.returns:n.trade.days) %>%
+  ggplot(aes(sd.log.returns, mean.log.returns, color = n.trade.days)) + 
+  geom_point(shape=16, aes(size = n.trade.days), alpha = .4) + 
+  theme_minimal() + 
+  scale_color_gradient(low = "#0091ff", high = "#f0650e") + 
+  scale_alpha(range=c(.25, .6)) + 
+  coord_cartesian(xlim = c(0.01, 0.033), ylim = c(0.001, 0.00132)) + 
+  geom_text(aes(label=ticker.symbol), hjust = 0, vjust = 0) + 
+  geom_rect(mapping = aes(xmin = 0.016, xmax = 0.0328, ymin = 0.00109, ymax = 0.00125, fill = factor(1)), alpha = 0) + 
+  guides(fill=FALSE) +   # remove legend for a particular aesthetic (fill)
+  labs(x = "Risk (StDev Log Returns)", y = "Growth (Mean Log Returns)") 
+```
+
+### S&P 500 Distribution of Securities by Sector
+
+```{r}
+sp_500 %>%
+  # Summarise data by frequency
+  group_by(gics.sector) %>%
+  summarise(count = n()) %>%
+  # Visualize 
+  ggplot(aes(x = gics.sector %>% fct_reorder(count),
+             y = count
+            )) + 
+  geom_bar(stat = "identity") +
+  geom_text(aes(label = count), size = 3, nudge_y = 4, nudge_x = .1) + 
+  scale_y_continuous(limits = c(0,80)) +
+  xlab(label = "GICS Sector") +
+  theme(plot.title = element_text(size = 16)) + 
+  coord_flip() 
+```
+
+AVGO: Broadcom
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- Candlestick chart shows that AVGO had a increasing trend but a slightly decline since Jan 2018. Using a 20-day simple moving average with 2 standard deviations, we can see that there were two periods, one in July and one in September, that had higher volatility.
+- Applying the log-transformation, we can visually see that the daily returns are approximately normally distributed. After conducting 250 Monte Carlo simulations for one year of trading days simulations (N = 252), the resulting 95% confidence intervals for the stock price at the end of the simulation is between $176.21 and $546.66, with a median estimated price of $320.5.
+- CAGR is 34.48% given the simulation.
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### AVGO: Broadcom Candlestick Chart
+
+```{r}
+AVGO <- tq_get("AVGO", get = "stock.prices", from = startDate, to = endDate)
+AVGO_xts <- xts(AVGO[,-1], order.by = as.Date(AVGO$date))
+
+AVGO_log_returns <- AVGO_xts %>%
+  Ad() %>%
+  dailyReturn(type = "log")
+names(AVGO_log_returns) <- "AVGO.Log.Returns"
+
+N <- 252 # Number of Stock Price Simulations
+M <- 250  # Number of Monte Carlo Simulations   
+mu <- mean(AVGO_log_returns, na.rm = TRUE)
+sigma <- sd(AVGO_log_returns, na.rm = TRUE)
+day <- 1:N
+price_init <- AVGO_xts$adjusted[[nrow(AVGO_xts$adjusted)]]
+# Simulate prices
+set.seed(123)
+monte_carlo_mat <- matrix(nrow = N, ncol = M)
+for (j in 1:M) {
+  monte_carlo_mat[[1, j]] <- price_init
+  for(i in 2:N) {
+    monte_carlo_mat[[i, j]] <- monte_carlo_mat[[i - 1, j]] * exp(rnorm(1, mu, sigma))
+  }
+}
+# Format and organize data frame
+price_sim <- cbind(day, monte_carlo_mat) %>% as_tibble() 
+nm <- str_c("Sim.", seq(1, M))
+nm <- c("Day", nm)
+names(price_sim) <- nm
+price_sim <- price_sim %>%
+  gather(key = "Simulation", value = "Stock.Price", -(Day))
+
+dygraph(AVGO_xts[,1:4]) %>% dyCandlestick()
+```
+
+### AVGO: Daily log(Returns) Distribution
+
+```{r}
+
+AVGO_log_returns %>%    
+  ggplot(aes(x = AVGO.Log.Returns)) + 
+  geom_histogram(bins = 100) + 
+  geom_density() +
+  geom_rug(alpha = 0.5) + 
+  labs(title = "", y = "Count")
+```
+
+### Confidence Intervals for the Stock Price
+
+```{r}
+end_stock_prices <- price_sim %>% filter(Day == max(Day))
+probs <- c(.005, .025, .25, .5, .75, .975, .995)
+dist_end_stock_prices <- quantile(end_stock_prices$Stock.Price, probs = probs)
+dist_table <- dist_end_stock_prices %>% round(2) %>% t() %>% as.data.frame()
+knitr::kable(dist_table)   # put it in a table
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Candlestick with Bollinger Bands for the past 25 weeks
+
+```{r}
+week_num = 25      # input
+end <- ymd(Sys.Date())
+start <- end - weeks(week_num)
+AVGO %>%
+  ggplot(aes(x = date, y = close)) +
+  geom_candlestick(aes(open = open, close = close, high = high, low = low)) + 
+  geom_bbands(aes(high = high, low = low, close = close),
+              ma_fun = SMA, n = 20, sd = 2, size = 1) + 
+  labs(title = "",
+       x = "", y = "Closing Price") +
+  coord_x_date(xlim = c(start, end),
+               ylim = c(180, 300))
+```
+
+### 250 Monte-Carlo Simulations for Prices Over 252 Trading Days
+
+```{r}
+# Visualize simulation
+price_sim %>%
+  ggplot(aes(x = Day, y = Stock.Price, Group = Simulation)) + 
+  geom_line(alpha = 0.1)
+```
+
+### Compound Annual Growth Rate (CAGR) Simulation
+
+```{r}
+# Inputs
+N_hist          <- nrow(AVGO_xts) / 252
+p_start_hist    <- AVGO_xts$adjusted[[1]]
+p_end_hist      <- AVGO_xts$adjusted[[nrow(AVGO_xts)]]
+N_sim           <- N / 252
+p_start_sim     <- p_end_hist
+p_end_sim       <- dist_end_stock_prices[[4]]
+# Compound annual growth rate (CAGR) calculations
+CAGR_historical <- (p_end_hist / p_start_hist) ^ (1 / N_hist) - 1   # 35.72%
+CAGR_sim        <- (p_end_sim / p_start_sim) ^ (1 / N_sim) - 1    # 34.19%
+
+# valueBox(formattable::percent(CAGR_historical,2), icon = "fa-pencil")
+valueBox(formattable::percent(CAGR_sim, 2), icon = "fa-pencil")
+```
+
+
+ABMD: ABIOMED Inc
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- Candlestick chart shows that ABMD had a slightly volatility since June 2018. Using a 20-day simple moving average with 2 standard deviations, we can see that there were one period in May that had higher volatility.
+- Applying the log-transformation, we can visually see that the daily returns are approximately normally distributed. After conducting 250 Monte Carlo simulations for one year of trading days simulations (N = 252), the resulting 95% confidence intervals for the stock price at the end of the simulation is between $216.18 and $1113.09, with a median estimated price of $513.88.
+- CAGR is 32.83% given the simulation.
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### ABMD: ABIOMED Inc Candlestick Chart
+
+```{r}
+ABMD <- tq_get("ABMD", get = "stock.prices", from = startDate, to = endDate)
+ABMD_xts <- xts(ABMD[,-1], order.by = as.Date(ABMD$date))
+
+ABMD_log_returns <- ABMD_xts %>%
+  Ad() %>%
+  dailyReturn(type = "log")
+names(ABMD_log_returns) <- "ABMD.Log.Returns"
+
+N <- 252 # Number of Stock Price Simulations
+M <- 250  # Number of Monte Carlo Simulations   
+mu <- mean(ABMD_log_returns, na.rm = TRUE)
+sigma <- sd(ABMD_log_returns, na.rm = TRUE)
+day <- 1:N
+price_init <- ABMD_xts$adjusted[[nrow(ABMD_xts$adjusted)]]
+# Simulate prices
+set.seed(123)
+monte_carlo_mat <- matrix(nrow = N, ncol = M)
+for (j in 1:M) {
+  monte_carlo_mat[[1, j]] <- price_init
+  for(i in 2:N) {
+    monte_carlo_mat[[i, j]] <- monte_carlo_mat[[i - 1, j]] * exp(rnorm(1, mu, sigma))
+  }
+}
+# Format and organize data frame
+price_sim <- cbind(day, monte_carlo_mat) %>% as_tibble() 
+nm <- str_c("Sim.", seq(1, M))
+nm <- c("Day", nm)
+names(price_sim) <- nm
+price_sim <- price_sim %>%
+  gather(key = "Simulation", value = "Stock.Price", -(Day))
+
+dygraph(ABMD_xts[,1:4]) %>% dyCandlestick()
+```
+
+### ABMD: Daily log(Returns) Distribution
+
+```{r}
+ABMD_log_returns %>%    
+  ggplot(aes(x = ABMD.Log.Returns)) + 
+  geom_histogram(bins = 100) + 
+  geom_density() +
+  geom_rug(alpha = 0.5) + 
+  labs(title = "", y = "Count")
+```
+
+### Confidence Intervals for the Stock Price
+
+```{r}
+end_stock_prices <- price_sim %>% filter(Day == max(Day))
+probs <- c(.005, .025, .25, .5, .75, .975, .995)
+dist_end_stock_prices <- quantile(end_stock_prices$Stock.Price, probs = probs)
+dist_table <- dist_end_stock_prices %>% round(2) %>% t() %>% as.data.frame()
+knitr::kable(dist_table)   # put it in a table
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Candlestick with Bollinger Bands for the past 25 weeks
+
+```{r}
+week_num = 25      # input
+end <- ymd(Sys.Date())
+start <- end - weeks(week_num)
+ABMD %>%
+  ggplot(aes(x = date, y = close)) +
+  geom_candlestick(aes(open = open, close = close, high = high, low = low)) + 
+  geom_bbands(aes(high = high, low = low, close = close),
+              ma_fun = SMA, n = 20, sd = 2, size = 1) + 
+  labs(title = "",
+       x = "", y = "Closing Price") +
+  coord_x_date(xlim = c(start, end),
+               ylim = c(270, 500))
+```
+
+### 250 Monte-Carlo Simulations for Prices Over 252 Trading Days
+
+```{r}
+# Visualize simulation
+price_sim %>%
+  ggplot(aes(x = Day, y = Stock.Price, Group = Simulation)) + 
+  geom_line(alpha = 0.1)
+```
+
+### Compound Annual Growth Rate (CAGR) Simulation
+
+```{r}
+# Inputs
+N_hist          <- nrow(ABMD_xts) / 252
+p_start_hist    <- ABMD_xts$adjusted[[1]]
+p_end_hist      <- ABMD_xts$adjusted[[nrow(ABMD_xts)]]
+N_sim           <- N / 252
+p_start_sim     <- p_end_hist
+p_end_sim       <- dist_end_stock_prices[[4]]
+# Compound annual growth rate (CAGR) calculations
+CAGR_historical <- (p_end_hist / p_start_hist) ^ (1 / N_hist) - 1   # 34.92%
+CAGR_sim        <- (p_end_sim / p_start_sim) ^ (1 / N_sim) - 1    # 32.79%
+
+# valueBox(formattable::percent(CAGR_historical,2), icon = "fa-pencil")
+valueBox(formattable::percent(CAGR_sim, 2), icon = "fa-pencil")
+```
+
+
+ROST: Ross Stores
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- Candlestick chart shows that ROST had a slightly volatility in H2 of 2017. Using a 20-day simple moving average with 2 standard deviations, we can see that there was no outstanding volatility.
+- Applying the log-transformation, we can visually see that the daily returns are approximately normally distributed. After conducting 250 Monte Carlo simulations for one year of trading days simulations (N = 252), the resulting 95% confidence intervals for the stock price at the end of the simulation is between $78.98 and $200.27, with a median estimated price of $129.13.
+- CAGR is 31.34% given the simulation.
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### ROST: Ross Stores Candlestick Chart
+
+```{r}
+ROST <- tq_get("ROST", get = "stock.prices", from = startDate, to = endDate)
+ROST_xts <- xts(ROST[,-1], order.by = as.Date(ROST$date))
+
+ROST_log_returns <- ROST_xts %>%
+  Ad() %>%
+  dailyReturn(type = "log")
+names(ROST_log_returns) <- "ROST.Log.Returns"
+
+N <- 252 # Number of Stock Price Simulations
+M <- 250  # Number of Monte Carlo Simulations   
+mu <- mean(ROST_log_returns, na.rm = TRUE)
+sigma <- sd(ROST_log_returns, na.rm = TRUE)
+day <- 1:N
+price_init <- ROST_xts$adjusted[[nrow(ROST_xts$adjusted)]]
+# Simulate prices
+set.seed(123)
+monte_carlo_mat <- matrix(nrow = N, ncol = M)
+for (j in 1:M) {
+  monte_carlo_mat[[1, j]] <- price_init
+  for(i in 2:N) {
+    monte_carlo_mat[[i, j]] <- monte_carlo_mat[[i - 1, j]] * exp(rnorm(1, mu, sigma))
+  }
+}
+# Format and organize data frame
+price_sim <- cbind(day, monte_carlo_mat) %>% as_tibble() 
+nm <- str_c("Sim.", seq(1, M))
+nm <- c("Day", nm)
+names(price_sim) <- nm
+price_sim <- price_sim %>%
+  gather(key = "Simulation", value = "Stock.Price", -(Day))
+
+dygraph(ROST_xts[,1:4]) %>% dyCandlestick()
+```
+
+### ROST: Daily log(Returns) Distribution
+
+```{r}
+ROST_log_returns %>%    
+  ggplot(aes(x = ROST.Log.Returns)) + 
+  geom_histogram(bins = 100) + 
+  geom_density() +
+  geom_rug(alpha = 0.5) + 
+  labs(title = "", y = "Count")
+```
+
+### Confidence Intervals for the Stock Price
+
+```{r}
+end_stock_prices <- price_sim %>% filter(Day == max(Day))
+probs <- c(.005, .025, .25, .5, .75, .975, .995)
+dist_end_stock_prices <- quantile(end_stock_prices$Stock.Price, probs = probs)
+dist_table <- dist_end_stock_prices %>% round(2) %>% t() %>% as.data.frame()
+knitr::kable(dist_table)   # put it in a table
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Candlestick with Bollinger Bands for the past 25 weeks
+
+```{r}
+week_num = 25      # input
+end <- ymd(Sys.Date())
+start <- end - weeks(week_num)
+ROST %>%
+  ggplot(aes(x = date, y = close)) +
+  geom_candlestick(aes(open = open, close = close, high = high, low = low)) + 
+  geom_bbands(aes(high = high, low = low, close = close),
+              ma_fun = SMA, n = 20, sd = 2, size = 1) + 
+  labs(title = "",
+       x = "", y = "Closing Price") +
+  coord_x_date(xlim = c(start, end),
+               ylim = c(70, 105))
+```
+
+### 250 Monte-Carlo Simulations for Prices Over 252 Trading Days
+
+```{r}
+# Visualize simulation
+price_sim %>%
+  ggplot(aes(x = Day, y = Stock.Price, Group = Simulation)) + 
+  geom_line(alpha = 0.1)
+```
+
+### Compound Annual Growth Rate (CAGR) Simulation
+
+```{r}
+# Inputs
+N_hist          <- nrow(ROST_xts) / 252
+p_start_hist    <- ROST_xts$adjusted[[1]]
+p_end_hist      <- ROST_xts$adjusted[[nrow(ROST_xts)]]
+N_sim           <- N / 252
+p_start_sim     <- p_end_hist
+p_end_sim       <- dist_end_stock_prices[[4]]
+# Compound annual growth rate (CAGR) calculations
+CAGR_historical <- (p_end_hist / p_start_hist) ^ (1 / N_hist) - 1   # 32.31%
+CAGR_sim        <- (p_end_sim / p_start_sim) ^ (1 / N_sim) - 1    # 31.06%
+
+# valueBox(formattable::percent(CAGR_historical,2), icon = "fa-pencil")
+valueBox(formattable::percent(CAGR_sim, 2), icon = "fa-pencil")
+```
+
+
+ALGN: Align Technology
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- Candlestick chart shows that ALGN had a decline in Oct 2018. Using a 20-day simple moving average with 2 standard deviations, we can see that Oct has a large volatility.
+- Applying the log-transformation, we can visually see that the daily returns are approximately normally distributed. After conducting 250 Monte Carlo simulations for one year of trading days simulations (N = 252), the resulting 95% confidence intervals for the stock price at the end of the simulation is between $197.5 and $885.71, with a median estimated price of $436.44.
+- CAGR is 30.30% given the simulation.
+- <span style="color:red">In conclusion, ROST and ABMD have less volatility than AVGO and ALGN. Comparing ROST and ABMD, ABMD has a higher CAGR than ROST, so we expect ABMD will produce the most short term gains.</span>
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### ALGN: Ross Stores Candlestick Chart
+
+```{r}
+ALGN <- tq_get("ALGN", get = "stock.prices", from = startDate, to = endDate)
+ALGN_xts <- xts(ALGN[,-1], order.by = as.Date(ALGN$date))
+
+ALGN_log_returns <- ALGN_xts %>%
+  Ad() %>%
+  dailyReturn(type = "log")
+names(ALGN_log_returns) <- "ALGN.Log.Returns"
+
+N <- 252 # Number of Stock Price Simulations
+M <- 250  # Number of Monte Carlo Simulations   
+mu <- mean(ALGN_log_returns, na.rm = TRUE)
+sigma <- sd(ALGN_log_returns, na.rm = TRUE)
+day <- 1:N
+price_init <- ALGN_xts$adjusted[[nrow(ALGN_xts$adjusted)]]
+# Simulate prices
+set.seed(123)
+monte_carlo_mat <- matrix(nrow = N, ncol = M)
+for (j in 1:M) {
+  monte_carlo_mat[[1, j]] <- price_init
+  for(i in 2:N) {
+    monte_carlo_mat[[i, j]] <- monte_carlo_mat[[i - 1, j]] * exp(rnorm(1, mu, sigma))
+  }
+}
+# Format and organize data frame
+price_sim <- cbind(day, monte_carlo_mat) %>% as_tibble() 
+nm <- str_c("Sim.", seq(1, M))
+nm <- c("Day", nm)
+names(price_sim) <- nm
+price_sim <- price_sim %>%
+  gather(key = "Simulation", value = "Stock.Price", -(Day))
+
+dygraph(ALGN_xts[,1:4]) %>% dyCandlestick()
+```
+
+### ALGN: Daily log(Returns) Distribution
+
+```{r}
+ALGN_log_returns %>%    
+  ggplot(aes(x = ALGN.Log.Returns)) + 
+  geom_histogram(bins = 100) + 
+  geom_density() +
+  geom_rug(alpha = 0.5) + 
+  labs(title = "", y = "Count")
+```
+
+### Confidence Intervals for the Stock Price
+
+```{r}
+end_stock_prices <- price_sim %>% filter(Day == max(Day))
+probs <- c(.005, .025, .25, .5, .75, .975, .995)
+dist_end_stock_prices <- quantile(end_stock_prices$Stock.Price, probs = probs)
+dist_table <- dist_end_stock_prices %>% round(2) %>% t() %>% as.data.frame()
+knitr::kable(dist_table)   # put it in a table
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Candlestick with Bollinger Bands for the past 25 weeks
+
+```{r}
+week_num = 25      # input
+end <- ymd(Sys.Date())
+start <- end - weeks(week_num)
+ALGN %>%
+  ggplot(aes(x = date, y = close)) +
+  geom_candlestick(aes(open = open, close = close, high = high, low = low)) + 
+  geom_bbands(aes(high = high, low = low, close = close),
+              ma_fun = SMA, n = 20, sd = 2, size = 1) + 
+  labs(title = "",
+       x = "", y = "Closing Price") +
+  coord_x_date(xlim = c(start, end),
+               ylim = c(200, 450))
+```
+
+### 250 Monte-Carlo Simulations for Prices Over 252 Trading Days
+
+```{r}
+# Visualize simulation
+price_sim %>%
+  ggplot(aes(x = Day, y = Stock.Price, Group = Simulation)) + 
+  geom_line(alpha = 0.1)
+```
+
+### Compound Annual Growth Rate (CAGR) Simulation
+
+```{r}
+# Inputs
+N_hist          <- nrow(ALGN_xts) / 252
+p_start_hist    <- ALGN_xts$adjusted[[1]]
+p_end_hist      <- ALGN_xts$adjusted[[nrow(ALGN_xts)]]
+N_sim           <- N / 252
+p_start_sim     <- p_end_hist
+p_end_sim       <- dist_end_stock_prices[[4]]
+# Compound annual growth rate (CAGR) calculations
+CAGR_historical <- (p_end_hist / p_start_hist) ^ (1 / N_hist) - 1   # 31.97%
+CAGR_sim        <- (p_end_sim / p_start_sim) ^ (1 / N_sim) - 1    # 30.06%
+
+# valueBox(formattable::percent(CAGR_historical,2), icon = "fa-pencil")
+valueBox(formattable::percent(CAGR_sim, 2), icon = "fa-pencil")
+```
+

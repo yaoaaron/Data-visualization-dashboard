@@ -1,0 +1,225 @@
+---
+title: "Quantified Self"
+author: "Aaron Yao"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: columns
+    vertical_layout: scroll
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+library(dplyr)
+library(rbokeh)
+library(ggplot2)
+library(tidyr)
+library(lubridate)
+library(readxl)
+
+water_fp <- read.csv("Water Record.csv", header = TRUE, stringsAsFactors = FALSE)
+```
+
+Direct Water Use
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- The top left line chart shows that the water usage by room has periodic pattern. I had the most water usage in kitchen on Sep 23rd. Most water usage came from bath mainly because shower generated a lot more water usage than other activities  
+- The top right stacked bar chart shows that Sunday has the most average water usage while Friday has the least average water usage. In addition, there is almost 0 water usage from laundry on Tuesday.
+- The bottom left area plot shows the cumulative water usage by day. Looks for me there was a lot more water usage in early October and stayed flat after that
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Daily Water Usage (Gallons)
+
+```{r}
+water_fp$date <- as.Date(water_fp$date, format = "%m/%d/%y")
+water_fp$dow <- wday(water_fp$date, label = TRUE)
+water_fp$bath <- water_fp$Gallons + water_fp$Gallons.1 + water_fp$Gallons.2
+water_fp$kitchen <- water_fp$Gallons.3 + water_fp$Gallons.4
+water_fp$laundry <- water_fp$Gallons.5
+# line chart by room
+water_fp %>% select(date, bath, kitchen, laundry) %>% gather(room, water, -date) %>% 
+  as.data.frame() %>% 
+  figure(ylab = "Water usage (Gallons)", ylim = c(-3, 70)) %>% ly_lines(x = date, y = water, color = room) %>%
+  ly_points(x = date, y = water, color = room, hover=c(date, room, water))
+```
+
+### Total Daily Water Usage (Gallons)
+
+```{r}
+water_fp %>% select(date, bath, kitchen, laundry) %>% gather(room, water, -date) %>% 
+  as.data.frame() %>% ggplot(aes(x = date, y = water, fill = room)) + geom_area() + 
+  labs(y = "Water usage (Gallons)")
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Average Water Usage (Gallons) by DOW
+
+```{r}
+# average water use by DOW
+water_fp %>% select(dow, bath, kitchen, laundry) %>% group_by(dow) %>%
+  summarise(bath = mean(bath), kitchen = mean(kitchen), laundry = mean(laundry)) %>%
+  gather(room, water, -dow) %>% as.data.frame() %>%
+  figure(xlab = "Day of Week", ylab = "Avg Water usage (Gallons)", ylim = c(-5, 70)) %>% 
+  ly_bar(x = dow, y = water, color = room, position = "stack")
+```
+
+### Water Usage Calculation Assumptions
+
+```{r}
+assump <- read_excel("Water Record.xlsx", sheet = "Assump")
+knitr::kable(assump) 
+```
+
+
+Indirect Water Use
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- For indirect water usage, the top left line chart indicates that 90% water usage came from the food I consume. Water usage from gasoline and electricity didn't have many fluctuations
+- The top right bar plot shows that I had more average water usage from gasoline on Fridays and Saturdays. It makes sense because I usually do more grocery shopping and entertainment on weekends
+- To further investigate where I used my car for, I plotted two horizontal bar charts for gasoline and food respectively. Other than miles drove to/from work, I had some days that had more miles driven, eg. Oct 26th. For the water usage from food, dinner and lunch have similar water usage, but breakfast has a relatively small amount of water usage
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Daily Water Usage (Gallons)
+
+```{r}
+water_fp$food <- water_fp$Gallons.7 + water_fp$Gallons.8 + water_fp$Gallons.9
+water_fp %>% select(date, Gallons.6, electricity.gallons, food) %>% 
+  rename(gasoline = Gallons.6, eletricity = electricity.gallons) %>%
+  gather(type, water, -date) %>% as.data.frame() %>% 
+  figure(ylab = "Water usage (Gallons)", ylim = c(-15, 2300)) %>% ly_lines(x = date, y = water, color = type) %>%
+  ly_points(x = date, y = water, color = type, hover=c(date, type, water))
+```
+
+### Gasoline 
+
+```{r}
+water_fp %>% select(date, work.miles, restaurant.miles, entertainment.miles..move..travel..party., grocery, church) %>% 
+  rename(work = work.miles, restaurant = restaurant.miles, entertainment = entertainment.miles..move..travel..party.) %>%
+  gather(purpose, water, -date) %>% as.data.frame() %>%
+  figure(xlab = "Water usage (Gallons)", xlim = c(-5, 100), height = 800, width = 800) %>% 
+  ly_bar(x = water, y = date, color = purpose, position = "stack")
+```
+
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Average Water Usage (Gallons) by DOW
+
+```{r}
+water_fp %>% select(dow, Gallons.6, electricity.gallons, food) %>% group_by(dow) %>%
+  summarise(gasoline = mean(Gallons.6), electricity = mean(electricity.gallons), food = mean(food)) %>%
+  gather(type, water, -dow) %>% as.data.frame() %>%
+  figure(xlab = "Day of Week", ylab = "Avg Water usage (Gallons)", ylim = c(-0.1, 1.6)) %>% 
+  ly_bar(x = dow, y = water, color = type, position = "fill")
+```
+
+### Food
+
+```{r}
+water_fp %>% select(date, Gallons.7, Gallons.8, Gallons.9) %>% 
+  rename(breakfast = Gallons.7, lunch = Gallons.8, dinner = Gallons.9) %>%
+  gather(meal, water, -date) %>% as.data.frame() %>%
+  figure(xlab = "Water usage (Gallons)", xlim = c(-5, 2500)) %>% 
+  ly_bar(x = water, y = date, color = meal, position = "stack")
+```
+
+Overall Water Footprint
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- To summarize previous results, I added all the water usage together in a single chart to the left
+- According to the GRACE’s Water Footprint Calculator Methodology, "the average values for a typical profile of someone in the US and got a value of 2,220 gallons per person per day. The researcher excluded greywater, rain barrels, pools and all recycling, because most people in the US don’t have or, on a regular basis, do those things". My water usage overall didn't exceed US average values
+- To see how my water usage varies on different day of week, the boxplot to the right indicates that Friday, Saturday, Sunday and Wednesday have water usage that skewed to the right. Monday, Thursday and Tuesday water usage are skewed to the left
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Overall Water Usage (Gallons)
+
+```{r}
+# direct & indirect water
+water_fp$direct <- water_fp$bath + water_fp$kitchen + water_fp$laundry
+water_fp$indirect <- water_fp$Gallons.6 + water_fp$electricity.gallons + water_fp$food
+water_fp %>% select(date, direct, indirect) %>% 
+  gather(type, water, -date) %>% as.data.frame() %>% 
+  ggplot(aes(x = date, y = water, fill = type)) + geom_area() + 
+  geom_hline(yintercept=2220, linetype="dashed", color = "red") + 
+  labs(y = "Water usage (Gallons)")
+```
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### Overall Water Usage (Gallons) by DOW
+
+```{r}
+water_fp$total = water_fp$direct + water_fp$indirect
+water_fp %>% select(dow, total) %>%
+  figure(ylab = "Water usage (Gallons)", xlab = "Day of Week") %>%
+  ly_boxplot(dow, total)
+```
+
+Carbon & Ecological Footprint
+=======================================================================
+
+Column {.sidebar data-width=200 data-padding=10}
+-----------------------------------------------------------------------
+
+- The top left plot shows my carbon footprint vs. U.S. average. My carbon footprint is only 30% of the US average
+- The ecological footprint bar plot displays a similar message that most of my ecological footprint came from food because I am a meat lover
+- Broadly, the US trend in number of Earths had a increasing trend in general but it starts to decrease since 2005
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### My Carbon Footprint
+
+```{r}
+carbon <- read_excel("Water Record.xlsx", sheet = "Carbon")
+carbon %>% gather(type, carbon, -Category) %>% as.data.frame() %>%
+  figure(xlab = "Carbon Emissions (Lbs)", ylab = "", legend_location = "bottom_right") %>% 
+  ly_bar(x = carbon, y = Category, color = type, position = "stack")
+```
+
+### US Trend in # Earths
+
+```{r}
+us_trend <- read.csv('usa_eco_trends.csv', header = TRUE, stringsAsFactors = FALSE)
+us_trend %>% figure(ylab = "# of Earths") %>% ly_lines(x = year, y = Num_of_Earths) %>%
+  ly_points(x =year, y = Num_of_Earths, hover=c(year, Num_of_Earths))
+```
+
+Column {data-width=400}
+-----------------------------------------------------------------------
+
+### My Ecological Footprint
+
+```{r}
+eco <- read_excel("Water Record.xlsx", sheet = "Ecological")
+eco %>% figure(xlab = "Consumption Category", ylab = "Ecological Footprint (global hectares or gha)") %>% 
+  ly_bar(x = Consumption_Category, y = Ecological_Footpint) 
+```
+
+### 
+
+```{r}
+# Visualize simulation
+#![image1]('my_eco.PNG')
+knitr::include_graphics('my_eco.png')
+```
+

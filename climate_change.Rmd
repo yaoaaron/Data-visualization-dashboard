@@ -1,0 +1,324 @@
+---
+title: "Climate Change"
+author: "Aaron Yao"
+output: 
+  flexdashboard::flex_dashboard:
+    source_code: embed
+---
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+library(dplyr)
+library(lawn)
+library(lubridate)
+library(ggplot2)
+library(plotly)
+library(reshape2)
+
+chi_month <- read.csv("USC00111497.csv", header=TRUE, stringsAsFactors = FALSE)
+chi_month <- chi_month[,c("DATE","TAVG", "SNOW", "PRCP")]
+```
+
+Temperature {.storyboard}
+=======================================================================
+
+### I live and work in the Greater Chicago Area, which gives me an idea of exploring my local area in terms of climate change.
+
+```{r}
+lawn_bbox_polygon(c(-88.347130, 41.577416, -87.303982, 42.360804)) %>% view
+```
+
+***
+
+- The city of Chicago is located on the shores of freshwater Lake Michigan, and is the third most populous city in the United States
+
+- Chicago is widely known as the "Windy City", even though it's not the windiest city in the US. When engineers and architects buil their tall buildings, they didn't forsee that the wind is sucked down into the streets
+
+- From the NOAA National Centers for Environmental Information website (https://www.ncdc.noaa.gov/), the blue highlighted polygon has 340 weather observation stations in total, which is still too many for my analysis
+
+- For more information about Chicago, please see https://en.wikipedia.org/wiki/Chicago
+
+### To further narrow down my analysis, I chose a specific station close to my apartment in order to deeper my data exploration and analysis
+
+```{r}
+lawn_bbox_polygon(c(-87.79, 42.15, -87.78, 42.135)) %>% view   # narrow down to 1 station
+```
+
+*** 
+
+- This station is located at Chicago Botanic Gardens. I chose this station not only because it's a famous landmark of Chicago, but also because it has the most complete weather data, which may provide more accurate and informative message
+
+- The weather data from this station consists of temperature in Celsius, snowfall in millimeters, and precipitation in millimeters, etc, since 1982
+
+### Question: how does the temperature differ across months?
+
+```{r}
+chi_month$DATE <- as.Date(paste(chi_month$DATE, "-01", sep=""))
+chi_month$Month <- as.factor(month(chi_month$DATE))
+chi_month$year <- as.factor(year(chi_month$DATE))
+chi_month %>% filter(year != '1981') %>% group_by(Month) %>% summarise(avg_temp = mean(TAVG, na.rm=TRUE)) %>% 
+  ggplot(aes(x=Month, y = avg_temp)) + geom_bar(stat="identity", fill="steelblue") + 
+  geom_text(aes(label=round(avg_temp,2)), vjust=1.6, color="black", size=3.5) +
+  theme_minimal() +
+  labs(x = "Month", y = expression(paste("Avg Monthly Temperature (", degree ~ C, " ) "))) 
+```
+
+***
+
+- This bar plot shows the average monthly temperature in Celsius measured at the station. 
+
+- July has the highest average temperature of 22.85 Celsius and January has the lowest average temperature of -4.42 Celsius for the last 36 years (1982-2018)
+
+### Question: how does the temperature look like for the past 36 years?
+
+```{r}
+chi_month %>% filter(year != '1981') %>% ggplot(aes(x=DATE, y=TAVG)) + geom_line(color = "red", size = 0.8) + 
+  geom_hline(yintercept = mean(chi_month$TAVG, na.rm=TRUE), color = "black") + 
+  geom_smooth(method="lm") + 
+  labs(x = "Month", y = expression(paste("Monthly Temperature (", degree ~ C, " ) "))) 
+```
+
+***  
+- This time series plot by month shows how the temperature changes by month. The black horizontal line is the average temperature for the entire history. A linear trend line is added to chart showing a slightly increasing trend for the temperature
+
+- There are some outliers in 2012/2013, which has the highest temperature. 1982 and 2014 has the lowest temperature across the board
+
+- Although we see a lot of ups and downs because of winters and summers, it's still hard to see how the trend looks like in general
+
+### Question: how does the temperature differ across years?
+
+```{r}
+temp_yearly_plt <- chi_month %>% filter(year != '1981') %>% group_by(year) %>% 
+  summarise(yearly_avg = mean(TAVG, na.rm=TRUE)) %>% 
+  ggplot(aes(x=year, y=yearly_avg, group = 1)) + geom_point() + 
+  geom_line(color = "red", size = 0.8) + 
+  geom_hline(yintercept = mean(chi_month$TAVG, na.rm=TRUE), color = "black") + 
+  geom_smooth(method="lm") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(x = "Year", y = expression(paste("Avg Yearly Temperature (", degree ~ C, " )"))) 
+temp_yearly_plt
+```
+
+***  
+- This time series yearly plot shows average yearly temperature for the last 36 years. The black horizontal line is the average temperature for the entire history. A linear trend line is added to chart, which shows a increasing trend from 9.2 to 10.2 Celsius
+
+- The year of 2014 has the lowest yearly average temperature. In addition, the yearly temperature fluctuated more often since 2010 than the 10 years prior.
+
+- The charts on the `Temperature` page might be able to show that there are some temperature changes around the area given the data from this station
+
+Snowfall & Precipitation {.storyboard}
+=======================================================================
+
+### Another aspect of climate change that might be worthy to look at is the changes in monthly snowfall. 
+
+```{r}
+chi_month %>% group_by(Month) %>% summarise(avg_snow = mean(SNOW, na.rm=TRUE)) %>% 
+  ggplot(aes(x=Month, y = avg_snow)) + geom_bar(stat="identity", fill="steelblue") + 
+  geom_text(aes(label=round(avg_snow, 2)), vjust=1.6, color="black", size=3.5) +
+  theme_minimal() +
+  labs(x = "Month", y = "Total Monthly Snowfall - Average by Month") 
+```
+
+***
+- This plot shows the average snowfall in millimeters measured at the station
+
+- June, July, Aug and Sep don't have any snowfalls, while Jan is usually the snowiest, which is consistent with the monthly average temperature
+
+### Question: how does the trend of snowfall look like for the past 36 years?
+
+```{r}
+chi_month %>% ggplot(aes(x=DATE, y=SNOW)) + geom_line(color = "red", size = 0.8) + 
+  geom_hline(yintercept = mean(chi_month$SNOW, na.rm=TRUE), color = "black") + 
+  geom_smooth(method="lm") + 
+  labs(x = "Month", y = "Snowfall")
+```
+
+***  
+- This time series plot by month shows how the snowfall changes by month. The black horizontal line is the average temperature for the entire history. A linear trend line is added to chart showing a slightly increasing trend for the snowfall
+
+- 2000/2001 had the most snowsfalls for the past 36 years. 1994, 2008 and 2014 also have more snows than other years. There could be a repeating pattern for every 6/7 years when big snows come in
+
+
+### Question: how does the snowfall change along the time by month?
+
+```{r}
+chi_month %>% filter(Month %in% c(1,2,3,12)) %>% ggplot(aes(x = DATE, y = SNOW, color = Month)) + 
+  geom_line(size = 0.8, alpha=0.5) + 
+  geom_smooth(aes(group = Month), method = "loess", alpha = 0.8, se=FALSE, linetype="dashed", size = 1.5) + 
+  theme_minimal() + 
+  labs(x = "Month", y = "Total Monthly Snowfall") 
+```
+
+***  
+- This chart shows snowfall amount for the past 36 years for Jan, Feb, Mar and Dec. The bold dotted line shows the LOESS trend by month. January has a downward trend since 2000. The snowfall in Feb decreases to the bottom in 2000 and started to increase later on. The snowfall in March stays flat, while December has a downward trend since 2005
+
+- This chart shows a downward trend in general, which didn't match the increasing trend in previous question. The previous trend shows the snowfall across months given there is no snowfalls in the summer. However, this chart is more accurate because the trend is seprated by months
+
+### Question: how does the precipitation differ across months?
+
+```{r}
+chi_month %>% group_by(Month) %>% summarise(avg_PRCP = mean(PRCP, na.rm=TRUE)) %>% 
+  ggplot(aes(x=Month, y = avg_PRCP)) + geom_bar(stat="identity", fill="steelblue") + 
+  geom_text(aes(label=round(avg_PRCP, 2)), vjust=1.6, color="black", size=3.5) +
+  theme_minimal() +
+  labs(x = "Month", y = "Total Monthly Precipitation - Average by Month") 
+```
+
+***  
+- This plot shows the average precipitation in millimeters measured at the station
+
+- Aug has the most amount of average precipitation of 114.44 millimeters and Feb has the least amount of average precipitation of 45.37 millimeters. Summer tend to have more precipitations than winter
+
+
+### Question: how does the trend of precipitation look like for the past 36 years?
+
+```{r}
+chi_month %>% ggplot(aes(x=DATE, y=PRCP)) + geom_line(color = "red", size = 0.8) + 
+  geom_hline(yintercept = mean(chi_month$PRCP, na.rm=TRUE), color = "black") + 
+  geom_smooth(method="lm")
+```
+
+***
+- This time series plot by month shows how the precipitation changes by month. The black horizontal line is the average precipitation for the entire history. A linear trend line is added to chart showing a slightly increasing trend for the precipitation
+
+- 1987/1988 and 2008 had the most precipitation for the past 36 years. The trend stays flat since 2010
+
+### Question: how does the precipitation change along the time in Feb and Aug?
+
+```{r}
+chi_month %>% filter(Month %in% c(2,8)) %>% ggplot(aes(x = DATE, y = PRCP, color = Month)) + 
+  geom_line(size = 0.8, alpha=0.5) + 
+  geom_smooth(aes(group = Month), method = "loess", alpha = 0.8, se=FALSE, linetype="dashed", size = 1.5) + 
+  theme_minimal() + 
+  labs(x = "Month", y = "Total Monthly Precipitation") 
+```
+
+***  
+- This chart shows precipitation for the past 36 years in Feb and Aug. Picking these two months to reflect the changes from the month that has the most/least amount of precipitation. 
+
+- The precipitation in Feb has a slightly increasing trend starting 1982 and the precipitation in Aug has a slightly decreasing trend starting 2005.
+
+- The charts on the `Snowfall & Precipitation` page indicates a slightly downward trend in snowfall and precipitation level didn't change a lot for the past 35 years.
+
+
+Ozone
+=======================================================================
+
+Column {.sidebar data-width=280 data-padding=10}
+-----------------------------------------------------------------------
+
+- "Ozone (O3) depletion does not cause global warming, but both of these environmental problems have a common cause: human activities that release pollutants into the atmosphere altering it" (https://www.ucsusa.org/global-warming/science-and-impacts/science/ozone-hole-and-gw-faq.html#.W-iME3pKhTY)
+- To explore the relationship between Ozone level and temperature change, Chicago Ozone data was downloaded from EPA (www.epa.gov) and was shown in the top chart. At a glance, the Ozone concentration had a slightly decreasing trend and the variance decreased as well
+- The bottom chart shows how the Ozone concentration changes by year since 1981. And the trend line shows a downward trend in general
+
+Column
+-----------------------------------------------------------------------
+
+### Monthly Ozone Concentration by month
+
+```{r}
+ozone <- read.csv('ozone_chi.csv', header=TRUE, stringsAsFactors = FALSE)
+ozone$Date <- as.Date(ozone$Date, "%m/%d/%Y")
+ozone <- ozone[,c('Date', 'Daily.Max.8.hour.Ozone.Concentration')]
+ozone$month <- as.factor(month(ozone$Date))
+ozone$year <- as.factor(year(ozone$Date))
+ozone$mon_year <- as.Date(paste(as.character(ozone$year), as.character(ozone$month), '01', sep="-"))
+
+p <- ozone %>% filter(!year %in% c('2018', '2017', '2016', '2015', '2014')) %>% group_by(mon_year) %>% 
+  summarise(avg_ozone = mean(Daily.Max.8.hour.Ozone.Concentration, na.rm=TRUE)) %>% 
+  plot_ly(x = ~mon_year, y = ~avg_ozone, mode = 'lines') %>% 
+  layout(xaxis = list(title = "Year"), yaxis = list(title="Ozone Concentration (ppm)"))
+p
+```
+
+### Average Ozone Concentration by year
+
+```{r}
+ozone_yearly_plt <- ozone %>% filter(!year %in% c('2018', '2017', '2016', '2015', '2014')) %>% group_by(year) %>% 
+  summarise(yearly_avg = mean(Daily.Max.8.hour.Ozone.Concentration, na.rm=TRUE)) %>% 
+  ggplot(aes(x=year, y = yearly_avg, group=1)) + geom_point() + 
+  geom_line(color = "red", size = 0.8) + 
+  geom_smooth(method="lm") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(x = "Year", y = "Ozone Concentration (ppm)") 
+ozone_yearly_plt
+```
+
+Greenhouse Gas
+=======================================================================
+
+Column {.sidebar data-width=280 data-padding=10}
+-----------------------------------------------------------------------
+
+- "Greenhouse gases from human activities are the most significant driver of observed climate change since the mid-20th century" (https://www.epa.gov/climate-indicators/greenhouse-gases)
+- To explore the relationship between greenhouse gas (GHG) emissions and temperature change, US GHG data was downloaded from www.epa.gov and was shown by gas type and by economic sectors in the left two charts. Carbon dioxide consists of 90% of the total GHG emissions. By looking at emissions by economic sectors, electricity generation had a significant decline in emissions, and transportation had a decline since 2008 but kept increasing after that
+- The right chart combines three data sources together to better understand the factors that might drive the climate change. We have seen a decline in GHG since 2008. Temperature has a similar trend compared with Ozone leve, but not with GHG emissions. However, Ozone level is decreasing given previous results. From above exploratory, it's hard to conclude that the increased temperature is due to Ozone and GHG, based on the data from Chicago area
+- Conclusion: since climate change is not just at the local level, it's more of a global event that involves complex interations between human activities and climate. And this might be the reason that no clear relationship is found in the above exploration
+
+Column
+-----------------------------------------------------------------------
+
+### Greenhouse gas emissions by gas
+```{r}
+ghg <- read.csv('ghg_by_gas.csv', header = TRUE, stringsAsFactors = FALSE)
+ghg <- as.data.frame(t(as.matrix(ghg)))
+colnames(ghg) <- as.character(unlist(ghg[1,]))
+ghg = ghg[-1, ]
+ghg <- tibble::rownames_to_column(ghg, "year")
+ghg$year <- substring(ghg$year, 2)
+ghg[] <- lapply(ghg, function(x) as.numeric(as.character(x)))
+# by gas
+ghg_melt <- melt(ghg[,-6], id.vars="year")
+ggplot(data=ghg_melt, aes(x=year, y=value, group=variable)) + 
+  geom_line(aes(color = variable), size = 1) + 
+  labs(x = "Year", y = "Greenhouse Gas Emissions") + 
+  theme(legend.title=element_blank())
+
+```
+
+### Greenhouse gas emissions by economic sectors
+```{r}
+# by economic sector
+ghg_sec <- read.csv('ghg_by_sector.csv', header=TRUE, stringsAsFactors = FALSE)
+ghg_sec <- as.data.frame(t(as.matrix(ghg_sec)))
+colnames(ghg_sec) <- as.character(unlist(ghg_sec[1,]))
+ghg_sec = ghg_sec[-1, ]
+ghg_sec <- tibble::rownames_to_column(ghg_sec, "year")
+ghg_sec$year <- substring(ghg_sec$year, 2)
+ghg_sec[] <- lapply(ghg_sec, function(x) as.numeric(as.character(x)))
+
+ggplot(data=melt(ghg_sec[,-9], id.vars="year"), aes(x=year, y=value, group=variable)) + 
+  geom_line(aes(color = variable), size = 1) + 
+  labs(x = "Year", y = "Greenhouse Gas Emissions") + 
+  theme(legend.title=element_blank())
+```
+
+Column
+-----------------------------------------------------------------------
+
+### Combine Ozone and GHG with Temperature
+```{r}
+year_data <- data.frame("year" = 1982:2018)
+year_data$year <- factor(year_data$year)
+temp_yearly <- chi_month %>% filter(year != '1981') %>% group_by(year) %>% 
+  summarise(yearly_avg = mean(TAVG, na.rm=TRUE)) %>% mutate(measure = "Temp") %>% right_join(year_data)
+temp_yearly$measure[which(is.na(temp_yearly$measure))] <- 'Temp'
+ozone_yearly <- ozone %>% filter(!year %in% c('2018', '2017', '2016', '2015', '2014')) %>% 
+  filter(year != '1981') %>% group_by(year) %>% 
+  summarise(yearly_avg = mean(Daily.Max.8.hour.Ozone.Concentration, na.rm=TRUE)) %>% 
+  mutate(measure = "Ozone") %>% right_join(year_data)
+ozone_yearly$measure[which(is.na(ozone_yearly$measure))] <- 'Ozone'
+ghg_yearly <- ghg %>% select(year, Total) %>% mutate(measure = "GHG") %>% rename(yearly_avg = Total) %>% 
+   mutate(year = factor(year)) %>% right_join(year_data)
+ghg_yearly$measure[which(is.na(ghg_yearly$measure))] <- 'GHG'
+combined <- rbind(temp_yearly, ozone_yearly, ghg_yearly)
+
+ggplot(combined, aes(x=year, y = yearly_avg, group = 1)) + geom_line(aes(color=measure)) + 
+  facet_grid(measure ~., scales = "free_y") + 
+  theme(legend.position = "none") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1)) + 
+  labs(x = "Year", y = "") 
+
+```
+
+
